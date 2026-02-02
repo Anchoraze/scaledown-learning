@@ -7,6 +7,7 @@ from backend.chunking import chunk_text
 from backend.store import save_chunks, get_chunks
 
 
+
 app = FastAPI(title="ScaleDown Learning Platform")
 
 
