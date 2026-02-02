@@ -3,21 +3,36 @@ import requests
 
 SCALEDOWN_API_KEY = os.getenv("SCALEDOWN_API_KEY")
 
-def scaledown_compress(text):
-    response = requests.post(
-        "https://api.scaledown.ai/compress",
-        headers={
-            "Authorization": f"Bearer {SCALEDOWN_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "text": text,
-            "target": "pedagogical",
-            "compression_ratio": 0.3
+SCALEDOWN_URL = "https://api.scaledown.xyz/compress/raw/"
+
+def scaledown_compress(text: str) -> str:
+    if not SCALEDOWN_API_KEY:
+        raise ValueError("SCALEDOWN_API_KEY not set")
+
+    payload = {
+        "context": "Educational textbook compression. Preserve definitions, formulas, and learning value.",
+        "prompt": text,
+        "model": "gpt-4o",
+        "scaledown": {
+            "rate": "auto"
         }
+    }
+
+    headers = {
+        "x-api-key": SCALEDOWN_API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(
+        SCALEDOWN_URL,
+        headers=headers,
+        json=payload,
+        timeout=15
     )
 
-    if response.status_code != 200:
-        return text
+    response.raise_for_status()
 
-    return response.json().get("compressed_text", text)
+    data = response.json()
+
+    # ScaleDown usually returns compressed text here
+    return data.get("output", data.get("compressed", data.get("result", "")))
