@@ -1,5 +1,6 @@
 from fastapi import FastAPI
-from scaledown import scaledown_compress
+from backend.scaledown import scaledown_compress
+
 
 app = FastAPI()
 
