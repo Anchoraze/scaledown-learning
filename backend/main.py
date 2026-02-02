@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 from backend.scaledown import scaledown_compress
 from backend.books import list_books, load_book
@@ -11,16 +12,21 @@ from backend.llm import generate_answer
 
 app = FastAPI(title="ScaleDown Learning Platform")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ---------- Models ----------
 
 class BookRequest(BaseModel):
     book_id: str
 
-
 class CompressRequest(BaseModel):
     text: str
-
 
 class AskRequest(BaseModel):
     book_id: str
@@ -29,6 +35,19 @@ class AskRequest(BaseModel):
 
 # ---------- Helpers ----------
 
+def rank_chunks(book_id: str, question: str, top_k: int = 3):
+    chunks = get_chunks(book_id)
+    if not chunks:
+        return []
+
+    query = question.lower()
+    scored = [
+        (similarity(query, ch["compressed"]), ch)
+        for ch in chunks
+    ]
+    return sorted(scored, reverse=True)[:top_k]
+
+
 def build_context(book_id: str, top_k: int = 3) -> str:
     chunks = get_chunks(book_id)
     if not chunks:
@@ -36,24 +55,12 @@ def build_context(book_id: str, top_k: int = 3) -> str:
     return "\n\n".join(ch["original"] for ch in chunks[:top_k])
 
 
-def rank_chunks(question: str, book_id: str, top_k: int = 3):
-    compressed_q = scaledown_compress(question)
-    chunks = get_chunks(book_id)
-
-    scored = []
-    for ch in chunks:
-        score = similarity(compressed_q, ch["compressed"])
-        scored.append((score, ch))
-
-    return sorted(scored, reverse=True)[:top_k]
-
 
 # ---------- Routes ----------
 
 @app.get("/")
 def root():
     return {"message": "ScaleDown Learning Backend Running"}
-
 
 @app.get("/books")
 def books():
@@ -108,13 +115,12 @@ def get_book_chunks(book_id: str):
 
 @app.post("/ask")
 def ask(req: AskRequest):
-    ranked = rank_chunks(req.question, req.book_id)
-
+    ranked = rank_chunks(req.book_id, req.question)
     if not ranked:
-        return {"error": "No chunks for this book"}
+        return {"error": "Book not indexed. Call /select_book first."}
 
-    confidence = max(s for s, _ in ranked)
     context = "\n\n".join(ch["original"] for _, ch in ranked)
+    confidence = max(score for score, _ in ranked)
 
     answer = generate_answer(req.question, context)
 
@@ -130,44 +136,47 @@ def ask(req: AskRequest):
 
 
 @app.post("/practice")
-def generate_practice(req: AskRequest):
-    ranked = rank_chunks(req.question, req.book_id)
-    context = "\n\n".join(ch["original"] for _, ch in ranked)
+def generate_practice(req: BookRequest):
+    context = build_context(req.book_id)
+    if not context:
+        return {"error": "Book not indexed"}
 
     prompt = """
-    Generate 3 practice problems based ONLY on the context.
-    Include answers at the end.
-    Difficulty: medium.
-    """
+Generate 5 practice questions strictly from the context.
+No numericals.
+No new concepts.
+Only conceptual textbook questions.
+Return as a numbered list.
+"""
 
     problems = generate_answer(prompt, context)
-    return {"problems": problems}
+
+    return {"practice": problems}
+
 
 
 @app.post("/quiz")
-def quiz(req: AskRequest):
+def generate_quiz(req: AskRequest):
     context = build_context(req.book_id)
+    if not context:
+        return {"error": "Book not indexed"}
 
-    quiz = generate_answer(
-        """
-        Generate 5 MCQs in STRICT JSON format:
-        [
-          {
-            "question": "",
-            "options": ["", "", "", ""],
-            "answer": ""
-          }
-        ]
-        """,
-        context
-    )
+    prompt = """
+Create 5 MCQs strictly from the context.
+Each MCQ must have:
+- question
+- 4 options
+- correct answer
+Return plain text or JSON.
+"""
+
+    quiz = generate_answer(prompt, context)
 
     return {"quiz": quiz}
 
 
 @app.post("/submit_answer")
 def submit_answer(data: dict):
-    # Hackathon-safe stub
     return {
         "status": "recorded",
         "message": "Progress updated (mock)"
