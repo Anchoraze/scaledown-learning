@@ -1,14 +1,13 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+import random
 
 from backend.scaledown import scaledown_compress
 from backend.books import list_books, load_book
 from backend.chunking import chunk_text
 from backend.store import save_chunks, get_chunks
-from backend.retrieval import similarity
 from backend.llm import generate_answer
-
 
 app = FastAPI(title="ScaleDown Learning Platform")
 
@@ -25,172 +24,111 @@ app.add_middleware(
 class BookRequest(BaseModel):
     book_id: str
 
-class CompressRequest(BaseModel):
-    text: str
-
 class AskRequest(BaseModel):
     book_id: str
-    question: str
-
+    question: str = ""
 
 # ---------- Helpers ----------
 
-def rank_chunks(book_id: str, question: str, top_k: int = 3):
-    chunks = get_chunks(book_id)
-    if not chunks:
-        return []
-
-    query = question.lower()
-    scored = [
-        (similarity(query, ch["compressed"]), ch)
-        for ch in chunks
-    ]
-    return sorted(scored, reverse=True)[:top_k]
-
-
-def build_context(book_id: str, top_k: int = 3) -> str:
+def build_context(book_id: str, top_k: int = 4) -> str:
     chunks = get_chunks(book_id)
     if not chunks:
         return ""
+    random.shuffle(chunks)
     return "\n\n".join(ch["original"] for ch in chunks[:top_k])
 
-
-
 # ---------- Routes ----------
-
-@app.get("/")
-def root():
-    return {"message": "ScaleDown Learning Backend Running"}
 
 @app.get("/books")
 def books():
     return {"books": list_books()}
 
-
 @app.post("/select_book")
 def select_book(req: BookRequest):
-    try:
-        text = load_book(req.book_id)
-        chunks = chunk_text(text)
+    text = load_book(req.book_id)
+    chunks = chunk_text(text)
 
-        stored_chunks = []
-        for c in chunks:
-            compressed = scaledown_compress(c)
-            stored_chunks.append({
-                "original": c,
-                "compressed": compressed
-            })
+    stored = []
+    for c in chunks:
+        stored.append({
+            "original": c,
+            "compressed": scaledown_compress(c)
+        })
 
-        save_chunks(req.book_id, stored_chunks)
-
-        return {
-            "book": req.book_id,
-            "original_chunks": len(chunks),
-            "compressed_chunks": len(stored_chunks)
-        }
-
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@app.post("/compress")
-def compress(req: CompressRequest):
-    compressed = scaledown_compress(req.text)
-    return {
-        "original_length": len(req.text),
-        "compressed_length": len(compressed),
-        "compressed_text": compressed
-    }
-
-
-@app.get("/chunks/{book_id}")
-def get_book_chunks(book_id: str):
-    chunks = get_chunks(book_id)
-    if not chunks:
-        return {"error": "No chunks found for this book"}
-    return {"book": book_id, "chunks": chunks}
-
-
-# ---------- Core Intelligence ----------
-
-@app.post("/ask")
-def ask(req: AskRequest):
-    ranked = rank_chunks(req.book_id, req.question)
-    if not ranked:
-        return {"error": "Book not indexed. Call /select_book first."}
-
-    context = "\n\n".join(ch["original"] for _, ch in ranked)
-    confidence = max(score for score, _ in ranked)
-
-    answer = generate_answer(req.question, context)
-
-    return {
-        "question": req.question,
-        "answer": answer,
-        "confidence": confidence,
-        "sources": [
-            {"score": s, "text": ch["original"]}
-            for s, ch in ranked
-        ]
-    }
-
+    save_chunks(req.book_id, stored)
+    return {"status": "ok"}
 
 @app.post("/practice")
-def generate_practice(req: BookRequest):
+def practice(req: BookRequest):
     context = build_context(req.book_id)
     if not context:
-        return {"error": "Book not indexed"}
+        return {"practice": []}
 
     prompt = """
-Generate 5 practice questions strictly from the context.
-No numericals.
-No new concepts.
-Only conceptual textbook questions.
-Return as a numbered list.
+Generate 5 conceptual practice questions strictly from the context.
+Return them as a numbered list.
 """
 
-    problems = generate_answer(prompt, context)
+    text = generate_answer(prompt, context)
 
-    return {"practice": problems}
+    practice = [
+        line.strip()[2:]
+        for line in text.split("\n")
+        if line.strip() and line[0].isdigit()
+    ]
 
-
+    return {"practice": practice}
 
 @app.post("/quiz")
-def generate_quiz(req: AskRequest):
+def quiz(req: AskRequest):
     context = build_context(req.book_id)
     if not context:
-        return {"error": "Book not indexed"}
+        return {"quiz": "[]"}
 
     prompt = """
 Create 5 MCQs strictly from the context.
-Each MCQ must have:
-- question
-- 4 options
-- correct answer
-Return plain text or JSON.
+
+Return VALID JSON only in this format:
+
+[
+  {
+    "question": "...",
+    "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+    "answerIndex": 0
+  }
+]
+
+Rules:
+- answerIndex must be 0-based
+- No explanations
+- JSON only
 """
 
     quiz = generate_answer(prompt, context)
-
     return {"quiz": quiz}
 
+# 🔥 NEW: ASK QUESTION ENDPOINT
+@app.post("/ask")
+def ask(req: AskRequest):
+    context = build_context(req.book_id)
+    if not context:
+        return {"answer": "Book not indexed."}
 
-@app.post("/submit_answer")
-def submit_answer(data: dict):
-    return {
-        "status": "recorded",
-        "message": "Progress updated (mock)"
-    }
+    prompt = f"""
+You are a helpful teacher.
 
+Answer the following question clearly and directly
+using ONLY the given context.
 
-@app.get("/peer_comparison/{user_id}")
-def peer(user_id: str):
-    return {
-        "your_accuracy": 70,
-        "peer_average": 62
-    }
+Question:
+{req.question}
 
+Rules:
+- Do NOT mention the word "context"
+- Do NOT say "according to the context"
+- Explain in simple textbook language
+"""
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+    answer = generate_answer(prompt, context)
+
+    return {"answer": answer}
