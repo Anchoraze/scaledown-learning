@@ -5,6 +5,10 @@
 </p>
 
 <p align="center">
+
+
+
+
   <img src="https://img.shields.io/badge/Status-Active-success" />
   <img src="https://img.shields.io/badge/AI-Groq-orange" />
   <img src="https://img.shields.io/badge/Compression-ScaleDown-blue" />
@@ -150,6 +154,10 @@ Perfect for:
 ## Demo Video
 
 [▶️ Click to watch demo](demo/demo.mp4)
+
+
+https://github.com/user-attachments/assets/de566619-8ed8-40d5-83af-befe1f6bbdbd
+
 
 
 ---
