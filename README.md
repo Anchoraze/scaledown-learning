@@ -145,6 +145,12 @@ Perfect for:
 - 🧑‍🎓 Students
 - 👨‍💻 AI Engineers
 - 📚 EdTech platforms
+---
+
+## Demo Video
+
+[▶️ Click to watch demo](demo/demo.mp4)
+
 
 ---
 
